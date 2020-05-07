@@ -195,7 +195,8 @@ def rotateImage(img,degree,pt1,pt2,pt3,pt4):
     [[pt1[0]], [pt1[1]]] = np.dot(matRotation, np.array([[pt1[0]], [pt1[1]], [1]]))
     [[pt3[0]], [pt3[1]]] = np.dot(matRotation, np.array([[pt3[0]], [pt3[1]], [1]]))
     imgOut=imgRotation[int(pt1[1]):int(pt3[1]),int(pt1[0]):int(pt3[0])]
-    cv2.imshow("imgOut",imgOut)  #裁减得到的旋转矩形框
+    #cv2.imshow("imgOut",imgOut)  #裁减得到的旋转矩形框
+    
     #cv2.imwrite("imgOut.jpg",imgOut)
     # pt2 = list(pt2)
     # pt4 = list(pt4)
@@ -267,8 +268,10 @@ if __name__ == '__main__':
     
     netss = cv2.dnn.readNet('frozen_east_text_detection.pb')
     
-    
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture("tours.mp4")
+    fr = cap.get(cv2.CAP_PROP_FPS)
+    print(fr)
+    #cap = cv2.VideoCapture(0)
     ## some videowriter props
     sz = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -279,10 +282,13 @@ if __name__ == '__main__':
     ret, firstFrame = cap.read()
     score_queue = []
     score_product = 0
-    
-    
+    ea = 0
+    cr = 0
+    sk = 0
+    t = time.time()
     while(1):
-        t = time.time()
+        lx = int((time.time() - t) * fr)
+        cap.set(cv2.CAP_PROP_POS_FRAMES,lx)
         ret, frame = cap.read()
         
         bflag = 0
@@ -296,14 +302,14 @@ if __name__ == '__main__':
         firstFrame = copy.deepcopy(frame)
         #time.sleep(0.3)
         
-        if bm < score_product * 0.85 / 50:
+        if (bm < score_product * 0.85 / 25) or (mm > 190000):
             bflag = 1
-        if mm > 50000:
+        if mm > 150000:
             mflag = 1
         
         score_queue.append(bm)
         score_product += bm
-        if len(score_queue) > 50:
+        if len(score_queue) > 25:
             cc = score_queue.pop(0)
             score_product -= cc
         
@@ -370,19 +376,24 @@ if __name__ == '__main__':
         cv2.putText(frame,'blurr: ' + str(bm), (30,50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,255,10), 1, cv2.LINE_AA)
         cv2.putText(frame,'motion: ' + str(mm), (30,90), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,255,10), 1, cv2.LINE_AA)
         if mode == 1:
+            cr+=1
             cv2.putText(frame,'mode: CRAFT', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(250,10,10), 1, cv2.LINE_AA)
         if mode == 2:
+            ea+=1
             cv2.putText(frame,'mode: EAST', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,250,10), 1, cv2.LINE_AA)
         if mode == 3 or mode == 0:
+            sk+=1
             cv2.putText(frame,'mode: SKIP', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,10,250), 1, cv2.LINE_AA)
         
         cv2.imshow("capture", frame)
         vout.write(frame)
-        print('time  '+str(time.time() - t))
-        
+        #print('time  '+str(time.time() - t))
+        print('SKIP: ' + str(sk) + '  CRAFT: ' + str(cr) + '  EAST: ' + str(ea))
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        
     cap.release()
     vout.release()
     cv2.destroyAllWindows()
+    
     #python test.py --trained_model=craft_mlt_25k.pth --test_folder=./test

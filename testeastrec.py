@@ -25,7 +25,7 @@ import zipfile
 from math import *
 from craft import CRAFT
 import pytesseract
-import time
+
 from imutils.video import VideoStream
 from imutils.video import FPS
 from imutils.object_detection import non_max_suppression
@@ -208,22 +208,8 @@ def rotateImage(img,degree,pt1,pt2,pt3,pt4):
     # drawRect(imgRotation,pt1,pt2,pt3,pt4,(255,0,0),2)
     return imgOut
 
-def measure_blurr(img):
-    img_graya = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-    img_gray = cv2.GaussianBlur(img_graya, (3,3), 0)
-    return cv2.Laplacian(img_gray,cv2.CV_64F).var()
-    
-    
-def compute_diff(prvimg, curimg):
-    prv_greya = cv2.cvtColor(prvimg,cv2.COLOR_RGB2GRAY)
-    cur_greya = cv2.cvtColor(curimg,cv2.COLOR_RGB2GRAY)
-    prv_grey = cv2.GaussianBlur(prv_greya, (19,19), 0)
-    cur_grey = cv2.GaussianBlur(cur_greya, (19,19), 0)
-    frameDelta = cv2.absdiff(prv_grey, cur_grey)
-    thresh = cv2.threshold(frameDelta, 25, 255, cv2.THRESH_BINARY)[1]
-    return sum(sum(thresh))
-    #return thresh
-    
+
+
 if __name__ == '__main__':
     # load net
     net = CRAFT()     # initialize
@@ -267,8 +253,11 @@ if __name__ == '__main__':
     
     netss = cv2.dnn.readNet('frozen_east_text_detection.pb')
     
-    
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture("tours.mp4")
+    fr = cap.get(cv2.CAP_PROP_FPS)
+    print(fr)
+    tf = 0
+    #cap = cv2.VideoCapture(0)
     ## some videowriter props
     sz = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -276,112 +265,56 @@ if __name__ == '__main__':
     fourcc = cv2.VideoWriter_fourcc(*'mpeg')
     vout = cv2.VideoWriter()
     vout.open('output.mp4',fourcc,fps,sz,True)
-    ret, firstFrame = cap.read()
-    score_queue = []
-    score_product = 0
-    
-    
+    t = time.time()
     while(1):
-        t = time.time()
+        lx = int((time.time() - t) * fr)
+        cap.set(cv2.CAP_PROP_POS_FRAMES,lx)
         ret, frame = cap.read()
+        tf+=1
+        rezframe = copy.deepcopy(frame)
+        orig = copy.deepcopy(frame)
         
-        bflag = 0
-        mflag = 0
-        mode = 0
+        if W is None or H is None:
+            (H, W) = rezframe.shape[:2]
+            rW = W / float(newW)
+            rH = H / float(newH)
         
-        bm = measure_blurr(frame)
-        #print('measure_blurr' + str(bm))
+        rezframe = cv2.resize(rezframe, (newW, newH))
+        blob = cv2.dnn.blobFromImage(rezframe, 1.0, (newW, newH),
+            (123.68, 116.78, 103.94), swapRB=True, crop=False)
+        netss.setInput(blob)
+        (scores, geometry) = netss.forward(layerNames)
+        (rects, confidences) = decode_predictions(scores, geometry)
+        boxes = non_max_suppression(np.array(rects), probs=confidences)
+        results = []
+        for (startX, startY, endX, endY) in boxes:
+            # scale the bounding box coordinates based on the respective
+            # ratios
+            startX = int(startX * rW)
+            startY = int(startY * rH)
+            endX = int(endX * rW)
+            endY = int(endY * rH)
+            roi = orig[startY:endY, startX:endX]
+            config = ("-l eng --oem 1 --psm 7")
+            try:
+                text = pytesseract.image_to_string(roi, config=config)
+                results.append((startX, startY, endX, endY))
+                cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 0, 255), 2)
+                cv2.putText(frame,text, (startX, startY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,10,255), 1, cv2.LINE_AA)
+            except:
+                pass
         
-        mm = compute_diff(firstFrame, frame)
-        firstFrame = copy.deepcopy(frame)
-        #time.sleep(0.3)
         
-        if bm < score_product * 0.85 / 50:
-            bflag = 1
-        if mm > 50000:
-            mflag = 1
         
-        score_queue.append(bm)
-        score_product += bm
-        if len(score_queue) > 50:
-            cc = score_queue.pop(0)
-            score_product -= cc
         
-        if bflag == 0 and mflag == 0:
-            mode = 1
-            bboxes, polys, score_text = test_net(net, frame, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
-            for i, box in enumerate(polys):
-                poly = np.array(box).astype(np.int32).reshape((-1))
-                
-                pt1 = [poly[0], poly[1]]
-                pt2 = [poly[2], poly[3]]
-                pt3 = [poly[4], poly[5]]
-                pt4 = [poly[6], poly[7]]
-                ptm = [(poly[0]+poly[2]+poly[4]+poly[6]) / 4, (poly[1]+poly[3]+poly[5]+poly[7]) / 4]
-                
-                cp =  copy.deepcopy(frame)
-                zz = rotateImage(cp,-degrees(atan2(pt1[1] - pt2[1],pt2[0]-pt1[0])),pt1,pt2,pt3,pt4)
-                text=pytesseract.image_to_string(zz)
-                cv2.putText(frame,text, (poly[0],poly[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,255,10), 1, cv2.LINE_AA)
-                #strResult = ','.join([str(p) for p in poly]) + '\r\n'
-                #print(text)
-                
-                poly = poly.reshape(-1, 2)
-                cv2.polylines(frame, [poly.reshape((-1, 1, 2))], True, color=(0, 255, 0), thickness=2)
-                
-        if (bflag == 1 and mflag == 0) or (bflag == 0 and mflag == 1):
-            mode = 2
-            rezframe = copy.deepcopy(frame)
-            orig = copy.deepcopy(frame)
-            
-            if W is None or H is None:
-                (H, W) = rezframe.shape[:2]
-                rW = W / float(newW)
-                rH = H / float(newH)
-            
-            rezframe = cv2.resize(rezframe, (newW, newH))
-            blob = cv2.dnn.blobFromImage(rezframe, 1.0, (newW, newH),
-                (123.68, 116.78, 103.94), swapRB=True, crop=False)
-            netss.setInput(blob)
-            (scores, geometry) = netss.forward(layerNames)
-            (rects, confidences) = decode_predictions(scores, geometry)
-            boxes = non_max_suppression(np.array(rects), probs=confidences)
-            results = []
-            for (startX, startY, endX, endY) in boxes:
-                # scale the bounding box coordinates based on the respective
-                # ratios
-                startX = int(startX * rW)
-                startY = int(startY * rH)
-                endX = int(endX * rW)
-                endY = int(endY * rH)
-                roi = orig[startY:endY, startX:endX]
-                config = ("-l eng --oem 1 --psm 7")
-                try:
-                    text = pytesseract.image_to_string(roi, config=config)
-                    results.append((startX, startY, endX, endY))
-                    cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 0, 255), 2)
-                    cv2.putText(frame,text, (startX, startY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,10,255), 1, cv2.LINE_AA)
-                except:
-                    pass
-            
-        if bflag == 1 and mflag == 1:
-            mode = 3
         
-        cv2.putText(frame,'blurr: ' + str(bm), (30,50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,255,10), 1, cv2.LINE_AA)
-        cv2.putText(frame,'motion: ' + str(mm), (30,90), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,255,10), 1, cv2.LINE_AA)
-        if mode == 1:
-            cv2.putText(frame,'mode: CRAFT', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(250,10,10), 1, cv2.LINE_AA)
-        if mode == 2:
-            cv2.putText(frame,'mode: EAST', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,250,10), 1, cv2.LINE_AA)
-        if mode == 3 or mode == 0:
-            cv2.putText(frame,'mode: SKIP', (30,130), cv2.FONT_HERSHEY_SIMPLEX, 0.7,(10,10,250), 1, cv2.LINE_AA)
-        
+        print('TOTAL: '+str(tf))
         cv2.imshow("capture", frame)
         vout.write(frame)
-        print('time  '+str(time.time() - t))
-        
+        #print('time  '+str(time.time() - t))
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+    
     cap.release()
     vout.release()
     cv2.destroyAllWindows()
